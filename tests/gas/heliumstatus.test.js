@@ -251,3 +251,75 @@ test('transfer test tabs: ZZTEST only, and only they can be cleaned up', () => {
   assert.equal(g.books[res.id].getSheetByName('ZZTEST1'), null);
   assert.equal(g.post({token: 'bad', action: 'transfer', ...TRANSFER}).ok, false);
 });
+
+// --- Graphic View page -------------------------------------------------------------------
+
+const SYSTEM = [
+  ['_System', 'Last Update Time', '', '2026/10/09 09:59:40'],
+  ['_System', 'Mode', '', 'transfer'],
+  ['_System', 'Inactive', '', 'atl2,janis,wei'],
+  ['_System', 'Alerts', '', '{"alerts":[["warning","outlet_low","pump","Outlet pressure low","outlet 2.25 bar",true]]}'],
+];
+
+test('_System tab is kept as text and never logged', () => {
+  const g = setUp();
+  upload(g, SAMPLE.concat(SYSTEM));
+  const sys = g.status.getSheetByName('_System').getRange(1, 1, 2, 4).getValues();
+  assert.equal(sys[1][1], 'transfer');
+  assert.equal(sys[1][3], SYSTEM[3][3]); // JSON stays a string
+  g.post({token: g.token, action: 'log'});
+  const header = g.logBook().getSheetByName('Log').getRange(1, 1, 1, 200).getValues()[0];
+  assert.ok(!header.some(h => String(h).indexOf('_System') === 0));
+});
+
+test('CMI / Wei tabs kept in status_now are not overwritten by the PC copy', () => {
+  const g = setUp({properties: {READ_SOURCES: ''}});
+  const cmi = g.status.insertSheet('CMI');
+  cmi.getRange(1, 1, 2, 2).setValues([['Last Update Time', 'Level (inch)'], ['newer', 9.1]]);
+  const res = upload(g, SAMPLE.concat([['CMI', 'Level', 'inch', '8.3'], ['Wei Cryostat', 'He Level', 'L', '5']]));
+  assert.equal(res.ok, true);
+  assert.deepEqual(cmi.getRange(2, 1, 1, 2).getValues()[0], ['newer', 9.1]);
+  assert.equal(g.status.getSheetByName('Wei Cryostat'), null);
+  assert.ok(g.status.getSheetByName('MPHUB'));
+});
+
+test('with another READ_SOURCES file, the CMI / Wei copy is still mirrored', () => {
+  const g = setUp(); // READ_SOURCES = test-cryo-sheet
+  upload(g, [['CMI', 'Level', 'inch', '8.3']]);
+  assert.equal(g.status.getSheetByName('CMI').getRange(2, 1).getValue(), 8.3);
+});
+
+test('GET serves the embeddable Graphic View page; ?format=json the old reply', () => {
+  const g = setUp();
+  const page = g.get({});
+  assert.equal(page.file, 'GraphicView');
+  assert.equal(page.xframe, 'ALLOWALL');
+  assert.deepEqual(g.get({format: 'json'}).json, {ok: true, sheet: 'status_now'});
+});
+
+test('VIEW_KEY protects the page and its data', () => {
+  const g = setUp({properties: {VIEW_KEY: 'k1'}});
+  assert.match(g.get({}).html, /Not authorised/);
+  assert.equal(g.get({key: 'k1'}).viewKey, 'k1');
+  assert.throws(() => g.ctx.graphicView('wrong'), /Not authorised/);
+  assert.ok(g.ctx.graphicView('k1').tabs);
+});
+
+test('graphicView returns status tabs (times in ms) and the last 24 h of pressures', () => {
+  const g = setUp({now: new Date('2026-10-09T10:00:00')});
+  upload(g, SAMPLE.concat(SYSTEM, [['MPHUB', 'Inlet Pressure', 'bar', '1.25'], ['MPHUB', 'Tank Pressure', 'bar', '1.1'],
+    ['MPHUB', 'Inlet Pressure Setpoint', 'mbar', '1270']]));
+  g.post({token: g.token, action: 'log'});
+  g.setNow(new Date('2026-10-09T10:03:00'));
+  g.post({token: g.token, action: 'log'});
+  const d = g.ctx.graphicView('');
+  assert.equal(d.tabs.MPHUB['Outlet Pressure (bar)'], 2.906);
+  assert.equal(typeof d.tabs.Janis['Last Update Time'], 'number');
+  assert.equal(d.tabs._System.Mode, 'transfer');
+  assert.equal(d.trend.t.length, 2);
+  assert.deepEqual([...d.trend.inlet], [1.25, 1.25]);
+  assert.deepEqual([...d.trend.setpoint], [1.27, 1.27]);
+  assert.deepEqual([...d.trend.tank], [1.1, 1.1]);
+  g.setNow(new Date('2026-10-10T10:02:00')); // a day later: only the newer row is within 24 h
+  assert.equal(g.ctx.graphicView('').trend.t.length, 1);
+});

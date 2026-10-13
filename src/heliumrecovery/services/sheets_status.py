@@ -7,6 +7,10 @@ the production layout (CurrentData-style tabs + HeliumRecoveryStatusLog-style
 - every `status_interval` s: all current values -> status_now tabs;
 - every `log_interval` s: ``action=log`` -> one row appended to the Log tab.
 
+With the status, tab ``_System`` gets the operation mode, the switched-off
+instruments and the current warning / critical alerts, for the web Graphic View
+served by the same script (tabs starting with "_" are not logged).
+
 Config: ``HR_STATUS_SHEET_URL`` (the /exec URL) and ``HR_STATUS_SHEET_TOKEN``.
 Keep the status interval >= 30 s: a consumer Google account allows about
 90 min of Apps Script run time per day.
@@ -15,7 +19,9 @@ Keep the status interval >= 30 s: a consumer Google account allows about
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
@@ -23,9 +29,28 @@ import httpx
 
 from ..core.engine import DataEngine
 from ..core.errors import ErrorHandler, ErrorKind
-from .sheets import external_rows, query_params, snapshot_rows, valve_rows
+from .sheets import Row, external_rows, format_value, query_params, snapshot_rows, valve_rows
 
 log = logging.getLogger(__name__)
+
+SYSTEM_TAB = "_System"
+
+
+def system_rows(modes: Any, alerts: Any) -> list[Row]:
+    """Tab _System: operation mode, switched-off instruments, warning / critical alerts.
+
+    Alerts as JSON ``{"alerts": [[severity, rule key, device, title, detail, confirmed], ...]}``;
+    "confirmed" is false while the condition still waits for its debounce.
+    """
+    found = [(r, st, True) for r, st in alerts.active()] + [(r, st, False) for r, st in alerts.pending()]
+    items = [[r.severity, r.key, r.device, r.title, st.detail, ok]
+             for r, st, ok in found if r.severity in ("critical", "warning")]
+    return [
+        Row(SYSTEM_TAB, "Last Update Time", "", format_value(datetime.now().astimezone())),
+        Row(SYSTEM_TAB, "Mode", "", str(modes.mode.value)),
+        Row(SYSTEM_TAB, "Inactive", "", ",".join(sorted(modes.inactive))),
+        Row(SYSTEM_TAB, "Alerts", "", json.dumps({"alerts": items}, ensure_ascii=False, separators=(",", ":"))),
+    ]
 
 
 class StatusPublisher:
@@ -43,6 +68,8 @@ class StatusPublisher:
         self.url, self.token, self.engine, self.errors, self.client = url, token, engine, errors, client
         self.status_interval, self.log_interval = status_interval, log_interval
         self.last_status: datetime | None = None
+        # more rows sent with every status upload (the runtime adds the _System tab)
+        self.extra_rows: Callable[[], list[Row]] | None = None
         self.last_log: datetime | None = None
 
     async def _post(self, params: list[tuple[str, str]]) -> dict[str, Any]:
@@ -65,6 +92,11 @@ class StatusPublisher:
         rows = snapshot_rows(snap) + external_rows(snap) + valve_rows(snap)
         if not rows:
             return False
+        if self.extra_rows is not None:
+            try:
+                rows += self.extra_rows()
+            except Exception:  # never lose the status upload over the extras
+                log.exception("status extras failed")
         try:
             await self._post(query_params(rows))
         except httpx.HTTPError as exc:

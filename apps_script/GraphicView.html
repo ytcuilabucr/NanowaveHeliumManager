@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<!--
+  Graphic View page served by HeliumStatus.gs (doGet), e.g. embedded in Notion.
+  Same cards as the console's Graphic View: ATL dewars, pump pressure gauges, cryostat
+  levels, inlet / tank pressure trends, alert colours (yellow = warning, red = critical,
+  dashed = still being confirmed) and greyed-out switched-off instruments.
+  Data: graphicView() in HeliumStatus.gs, re-read every REFRESH_S seconds.
+-->
+<style>
+:root {
+  --page: #edf1f5; --card: #fff; --line: #d3dce5; --tile: #f6f8fa; --text: #192d40; --muted: #617387;
+  --accent: #2466a2; --accent-bg: #eaf2fa; --ok: #238265; --ok-bg: #eaf5ef; --err: #b54242; --err-bg: #fceeee;
+  --warn: #936310; --warn-bg: #fff4de; --yellow: #f2b705; --teal: #238a8a; --violet: #6e6bb8;
+  --mono: 'Roboto Mono', ui-monospace, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--text); font: 14px/1.35 Inter, system-ui, 'Segoe UI', sans-serif; }
+header { background: #fff; border-bottom: 1px solid var(--line); padding: 10px 16px; display: flex; flex-wrap: wrap;
+  align-items: center; justify-content: space-between; gap: 8px 16px; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.logo { background: var(--accent); color: #fff; font-weight: 700; width: 30px; height: 30px; border-radius: 5px;
+  display: flex; align-items: center; justify-content: center; }
+.brand b { font-size: 17px; font-weight: 600; } .brand span { color: var(--muted); }
+.right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.updated { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.mode { border: 1.5px solid var(--line); border-radius: 999px; padding: 3px 12px; font-weight: 600; font-size: 13px;
+  color: var(--muted); background: var(--tile); }
+.mode.transfer { color: var(--warn); border-color: var(--yellow); background: var(--warn-bg); }
+.mode.agent { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
+main { padding: 12px 16px 20px; display: flex; flex-direction: column; gap: 12px; }
+.banner { border-radius: 8px; padding: 8px 14px; font-weight: 600; display: none; }
+.banner.warn { display: block; background: var(--warn-bg); color: var(--warn); border: 1.5px solid var(--yellow); }
+.banner.crit { display: block; background: var(--err-bg); color: var(--err); border: 1.5px solid var(--err); }
+.banner.off { display: block; background: var(--tile); color: var(--muted); border: 1.5px dashed var(--muted); }
+.layout { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: start; }
+.cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.charts { display: flex; flex-direction: column; gap: 12px; }
+@media (max-width: 900px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 560px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.card.warn { border: 2px solid var(--yellow); box-shadow: 0 0 0 3px var(--warn-bg); }
+.card.crit { border: 2px solid var(--err); box-shadow: 0 0 0 3px var(--err-bg); }
+.card.inactive { opacity: .45; filter: grayscale(1); }
+.card h3 { margin: 0; font-size: 16px; font-weight: 500; display: flex; justify-content: space-between; gap: 6px; align-items: center; }
+.badge { font-size: 11px; font-weight: 600; border-radius: 4px; padding: 2px 7px; white-space: nowrap; }
+.badge.ok { background: var(--ok-bg); color: var(--ok); } .badge.err { background: var(--err-bg); color: var(--err); }
+.badge.idle { background: var(--tile); color: var(--muted); }
+.mark { font-size: 12px; font-weight: 600; border-radius: 5px; padding: 2px 7px; display: none; }
+.mark.warn { display: block; background: var(--yellow); color: #3d2c00; }
+.mark.crit { display: block; background: var(--err); color: #fff; }
+.mark.pending { background: transparent; border: 1.5px dashed currentColor; }
+.mark.warn.pending { color: var(--warn); } .mark.crit.pending { color: var(--err); }
+.body { display: flex; gap: 12px; align-items: flex-start; }
+.vessel { width: 44px; height: 96px; border: 1.5px solid #c9d4df; border-radius: 9px; background: var(--tile);
+  position: relative; overflow: hidden; flex: none; }
+.vessel.small { width: 34px; height: 72px; }
+.vessel .fill { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: #e3eef9;
+  border-top: 2px solid var(--accent); transition: height .6s; }
+.lbl { color: var(--muted); font-size: 11px; }
+.val { font-family: var(--mono); font-size: 20px; font-weight: 500; white-space: nowrap; }
+.val small { font-family: Inter, sans-serif; font-size: 12px; color: var(--muted); margin-left: 4px; font-weight: 400; }
+.note { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+.note.stale { color: var(--err); }
+.gauge { width: 100%; height: 86px; display: block; }
+.chart { width: 100%; height: 220px; display: block; }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 16px; height: 3px; vertical-align: middle; margin-right: 5px; }
+.error { color: var(--err); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><div class="logo">He</div><b>Helium Recovery</b><span>Graphic View</span></div>
+  <div class="right"><span class="mode" id="mode">—</span><span class="updated" id="updated">loading…</span></div>
+</header>
+<main>
+  <div class="banner" id="banner"></div>
+  <div class="layout">
+    <div class="cards" id="cards"></div>
+    <div class="charts">
+      <div class="card"><h3>Inlet pressure &amp; setpoint <span class="lbl">bar · last 24 h</span></h3>
+        <div class="legend"><span><i style="background:var(--accent)"></i>Inlet</span>
+          <span><i style="background:var(--violet)"></i>Setpoint</span></div>
+        <svg class="chart" id="chart-inlet"></svg></div>
+      <div class="card"><h3>Tank pressure <span class="lbl">bar · last 24 h</span></h3>
+        <svg class="chart" id="chart-tank"></svg></div>
+    </div>
+  </div>
+  <div class="error" id="error"></div>
+</main>
+<script>
+const KEY = <?= JSON.stringify(viewKey) ?>;
+const REFRESH_S = 60;
+const PC_SILENT_S = 180;  // no status from the lab PC for this long -> grey banner
+const ATL = [['ATL1', 'atl1', 80], ['ATL2', 'atl2', 80], ['ATL3', 'atl3', 160]];
+const GAUGES = [['inlet', 'Inlet pressure', 'Inlet Pressure (bar)', 1.5], ['tank', 'Tank pressure', 'Tank Pressure (bar)', 1.5],
+  ['outlet', 'Outlet pressure', 'Outlet Pressure (bar)', 8]];
+// [card id, title, tab, level header, unit, scale, stale after s]
+const CRYO = [['janis', 'Janis', 'Janis', 'LHe Level (in)', 'in', 29, 600],
+  ['cmi', 'CMI', 'CMI', 'Level (inch)', 'in', 32, 3600], ['wei', 'Wei-He3', 'Wei Cryostat', 'He Level (L)', 'L', 100, 3600]];
+const GAUGE_RULES = {outlet_high: 'outlet', outlet_low: 'outlet', outlet_very_low: 'outlet', inlet_high: 'inlet', tank_high: 'tank'};
+const STALE_S = {atl: 300, pump: 300};
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+const fmt = (v, d) => (typeof v === 'number' && isFinite(v) ? v.toFixed(d) : '—');
+const hhmm = t => new Date(t).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hour12: false});
+const when = t => { const d = new Date(t); return (d.toDateString() === new Date().toDateString() ? '' :
+  d.toLocaleDateString([], {month: '2-digit', day: '2-digit'}) + ' ') + hhmm(t); };
+
+function card(id, title) {
+  return `<div class="card" id="c-${id}"><h3>${title}<span class="badge idle" id="b-${id}">—</span></h3>
+    <div class="mark" id="m-${id}"></div>`;
+}
+function build() {
+  let h = '';
+  ATL.forEach(([name, id, cap]) => {
+    h += card(id, name) + `<div class="body"><div class="vessel" title="0–${cap} L"><div class="fill" id="f-${id}"></div></div><div>
+      <div class="lbl">Liq. Vol</div><div class="val" id="v-${id}-vol">—<small>L</small></div>
+      <div class="lbl">Pres.</div><div class="val" id="v-${id}-pres">—<small>psi</small></div>
+      <div class="lbl">Gas Flow</div><div class="val" id="v-${id}-flow">—<small>L/min</small></div></div></div>
+      <div class="note" id="n-${id}"></div></div>`;
+  });
+  GAUGES.forEach(([id, title, , max]) => {
+    h += card(id, title) + `<svg class="gauge" id="g-${id}" viewBox="0 0 160 86">${gaugeSvg(max)}</svg>
+      <div class="val" id="v-${id}">—<small>bar</small></div></div>`;
+  });
+  CRYO.forEach(([id, title, , , unit, top]) => {
+    h += card(id, title) + `<div class="body"><div class="vessel small" title="0–${top} ${unit}"><div class="fill" id="f-${id}"></div></div><div>
+      <div class="lbl">${unit === 'in' ? 'LHe Level' : 'Liq. Vol'}</div><div class="val" id="v-${id}">—<small>${unit}</small></div></div></div>
+      <div class="note" id="n-${id}"></div></div>`;
+  });
+  $('cards').innerHTML = h;
+  GAUGES.forEach(([id]) => { $('b-' + id).remove(); });
+}
+function gaugeSvg(max) {
+  return `<path d="M15 78 A65 65 0 0 1 145 78" fill="none" stroke="#d3dce5" stroke-width="10"/>
+    <line class="needle" x1="80" y1="78" x2="80" y2="22" stroke="#2466a2" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="80" cy="78" r="5" fill="#2466a2"/>
+    <text x="15" y="86" font-size="9" fill="#617387" text-anchor="middle" font-family="monospace">0</text>
+    <text x="145" y="86" font-size="9" fill="#617387" text-anchor="middle" font-family="monospace">${max}</text>`;
+}
+function setGauge(id, v, max) {
+  const f = typeof v === 'number' ? Math.max(0, Math.min(1, v / max)) : 0;
+  const a = Math.PI * (1 - f), r = 56;
+  const n = $('g-' + id).querySelector('.needle');
+  n.setAttribute('x2', (80 + r * Math.cos(a)).toFixed(1));
+  n.setAttribute('y2', (78 - r * Math.sin(a)).toFixed(1));
+}
+function fill(id, frac) {
+  const f = typeof frac === 'number' && isFinite(frac) ? Math.max(0, Math.min(1, frac)) : 0;
+  $('f-' + id).style.height = (f * 100).toFixed(0) + '%';
+}
+function value(id, v, d) { const el = $(id); el.firstChild.nodeValue = fmt(v, d); }
+function live(id, t, staleAfter, now, inactive) {
+  const b = $('b-' + id), n = $('n-' + id);
+  const fresh = typeof t === 'number' && now - t < staleAfter * 1000;
+  if (inactive) { b.className = 'badge idle'; b.textContent = 'inactive'; }
+  else { b.className = 'badge ' + (fresh ? 'ok' : 'err'); b.textContent = fresh ? 'live' : 'stale'; }
+  if (n) { n.textContent = typeof t === 'number' ? 'Updated ' + when(t) : 'no reading'; n.className = 'note' + (fresh || inactive ? '' : ' stale'); }
+}
+
+function render(d) {
+  $('error').textContent = '';
+  const tabs = d.tabs, now = d.now, sys = tabs._System || {};
+  const inactive = new Set(String(sys.Inactive || '').split(',').filter(String));
+  let alerts = [];
+  try { alerts = JSON.parse(sys.Alerts || '{}').alerts || []; } catch (e) { /* keep none */ }
+  const mode = String(sys.Mode || 'observer');
+  $('mode').textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
+  $('mode').className = 'mode ' + mode;
+  const pcTime = sys['Last Update Time'] || (tabs.MPHUB || {})['Last Update Time'];
+  $('updated').textContent = typeof pcTime === 'number' ? 'Lab PC ' + when(pcTime) + ' · page ' + hhmm(now) : 'page ' + hhmm(now);
+
+  ATL.forEach(([name, id, cap]) => {
+    const a = tabs[name] || {};
+    value(`v-${id}-vol`, a['Liquid Vol (L)'], 1);
+    value(`v-${id}-pres`, a['Dewar Pres (psi)'], 2);
+    value(`v-${id}-flow`, a['Input Gas Flow (Lpm)'], 1);
+    fill(id, a['Liquid Vol (L)'] / cap);
+    live(id, a['Last Update Time'], STALE_S.atl, now, inactive.has(id));
+  });
+  const p = tabs.MPHUB || {};
+  GAUGES.forEach(([id, , header, max]) => { value('v-' + id, p[header], 3); setGauge(id, p[header], max); });
+  CRYO.forEach(([id, , tab, header, unit, top, stale]) => {
+    const c = tabs[tab] || {};
+    value('v-' + id, c[header], unit === 'in' ? 1 : 2);
+    fill(id, c[header] / top);
+    live(id, c['Last Update Time'], stale, now, inactive.has(id));
+  });
+  ATL.forEach(([, id]) => $('c-' + id).classList.toggle('inactive', inactive.has(id)));
+  CRYO.forEach(([id]) => $('c-' + id).classList.toggle('inactive', inactive.has(id)));
+  GAUGES.forEach(([id]) => $('c-' + id).classList.toggle('inactive', inactive.has('pump')));
+
+  // alert marks: same mapping as the console (rule -> gauge, device -> card)
+  const per = {};
+  alerts.forEach(([sev, key, device, title, detail, ok]) => {
+    const target = GAUGE_RULES[key] || device;
+    if ($('c-' + target)) (per[target] = per[target] || []).push([sev, detail || title, ok]);
+  });
+  document.querySelectorAll('.card[id^="c-"]').forEach(el => {
+    const id = el.id.slice(2), list = per[id] || [], m = $('m-' + id);
+    el.classList.remove('warn', 'crit');
+    if (!list.length) { m.className = 'mark'; m.textContent = ''; return; }
+    const crit = list.some(x => x[0] === 'critical'), confirmed = list.some(x => x[2]);
+    el.classList.add(crit ? 'crit' : 'warn');
+    m.className = 'mark ' + (crit ? 'crit' : 'warn') + (confirmed ? '' : ' pending');
+    m.textContent = list.map(([s, t, ok]) => (s === 'critical' ? '▲ ' : '● ') + t + (ok ? '' : ' (confirming)')).join(' · ');
+  });
+  const banner = $('banner');
+  if (typeof pcTime !== 'number' || now - pcTime > PC_SILENT_S * 1000) {
+    banner.className = 'banner off';
+    banner.textContent = 'No data from the lab PC' + (typeof pcTime === 'number' ? ' since ' + when(pcTime) : '') +
+      ' — values below may be out of date.';
+  } else if (alerts.length) {
+    const crit = alerts.some(a => a[0] === 'critical');
+    banner.className = 'banner ' + (crit ? 'crit' : 'warn');
+    banner.innerHTML = alerts.slice().sort((a, b) => (a[0] !== 'critical') - (b[0] !== 'critical') || b[5] - a[5])
+      .map(([s, , , title, , ok]) => esc((s === 'critical' ? 'CRITICAL: ' : 'WARNING: ') + title + (ok ? '' : ' (confirming)')))
+      .join(' &nbsp;·&nbsp; ');
+  } else {
+    banner.className = 'banner';
+  }
+  chart('chart-inlet', d.trend.t, [[d.trend.inlet, '#2466a2', ''], [d.trend.setpoint, '#6e6bb8', '5 4']]);
+  chart('chart-tank', d.trend.t, [[d.trend.tank, '#238a8a', '']]);
+}
+
+function chart(id, t, series) {
+  const svg = $(id), W = svg.clientWidth || 500, H = svg.clientHeight || 220, L = 44, R = 10, T = 10, B = 24;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const vals = [].concat(...series.map(s => s[0])).filter(v => typeof v === 'number');
+  if (!t.length || !vals.length) {
+    svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" fill="#617387" font-size="13">no log rows yet</text>`;
+    return;
+  }
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi - lo < 0.02) { lo -= 0.01; hi += 0.01; }
+  const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+  const t0 = t[0], t1 = Math.max(t[t.length - 1], t0 + 60e3);
+  const x = v => L + (v - t0) / (t1 - t0) * (W - L - R), y = v => T + (hi - v) / (hi - lo) * (H - T - B);
+  let g = '';
+  for (let i = 0; i <= 4; i++) {
+    const v = lo + (hi - lo) * i / 4, yy = y(v).toFixed(1);
+    g += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" stroke="#e3e9ef"/>` +
+      `<text x="${L - 6}" y="${+yy + 4}" text-anchor="end" font-size="10" fill="#617387" font-family="monospace">${v.toFixed(2)}</text>`;
+  }
+  const hours = (t1 - t0) / 3600e3, step = (hours > 12 ? 4 : hours > 4 ? 2 : 1) * 3600e3;
+  for (let tt = Math.ceil(t0 / step) * step; tt <= t1; tt += step) {
+    g += `<text x="${x(tt).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="#617387" font-family="monospace">${hhmm(tt)}</text>`;
+  }
+  series.forEach(([data, color, dash]) => {
+    let path = '', pen = false;
+    data.forEach((v, i) => {
+      if (typeof v !== 'number') { pen = false; return; }
+      path += (pen ? 'L' : 'M') + x(t[i]).toFixed(1) + ' ' + y(v).toFixed(1);
+      pen = true;
+    });
+    g += `<path d="${path}" fill="none" stroke="${color}" stroke-width="2" stroke-dasharray="${dash}"/>`;
+  });
+  svg.innerHTML = g;
+}
+
+let last = null;
+function load() {
+  google.script.run
+    .withSuccessHandler(d => { last = d; render(d); })
+    .withFailureHandler(e => { $('error').textContent = 'Could not read the sheet: ' + (e && e.message || e) + ' (retrying)'; })
+    .graphicView(KEY);
+}
+build();
+load();
+setInterval(load, REFRESH_S * 1000);
+window.addEventListener('resize', () => { if (last) render(last); });
+</script>
+</body>
+</html>

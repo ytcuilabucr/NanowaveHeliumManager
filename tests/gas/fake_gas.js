@@ -101,7 +101,7 @@ function loadScript({now = new Date('2026-10-09T10:00:00'), properties = {}} = {
   };
   const ctx = {
     Date: FakeDate,
-    Math, JSON, Number, String, Object, Array, isNaN,
+    Math, JSON, Number, String, Object, Array, isNaN, isFinite,
     console,
     SpreadsheetApp: {
       getActive: () => status,
@@ -128,6 +128,21 @@ function loadScript({now = new Date('2026-10-09T10:00:00'), properties = {}} = {
       },
     },
     Session: {getScriptTimeZone: () => 'America/Los_Angeles'},
+    HtmlService: {
+      XFrameOptionsMode: {ALLOWALL: 'ALLOWALL'},
+      createHtmlOutput: html => ({html}),
+      createTemplateFromFile: file => {
+        const page = {file};
+        page.evaluate = () => {
+          const out = {file, viewKey: page.viewKey, meta: {}};
+          out.setTitle = t => ((out.title = t), out);
+          out.addMetaTag = (k, v) => ((out.meta[k] = v), out);
+          out.setXFrameOptionsMode = m => ((out.xframe = m), out);
+          return out;
+        };
+        return page;
+      },
+    },
     Logger: {log() {}},
     DriveApp: {
       getFileById: id => ({
@@ -145,6 +160,7 @@ function loadScript({now = new Date('2026-10-09T10:00:00'), properties = {}} = {
     setNow: d => { clock = d; },
     logBook: () => ctx.SpreadsheetApp.openById(vm.runInContext('LOG_SHEET_ID', ctx) || 'status-id'),
     post: params => ctx.doPost({parameter: params}).json,
+    get: params => ctx.doGet({parameter: params}),
   };
 }
 

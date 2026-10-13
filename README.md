@@ -164,8 +164,12 @@ they are not tabs of the status spreadsheet itself). The service posts to it:
 | log spreadsheet, tab `Log` (+ `Charts`) | One row every 3 min; archived monthly to `LogArchives/HeliumRecoveryStatusLog_YYYYMM` |
 | Helium Recovery System Operation, tab `Helium Transfer` | Transfer log (created next to the log spreadsheet) |
 
-The same web app reads the CMI / Wei-He3 level spreadsheet. Charts and tabs can
-be published to the web and embedded in Notion.
+The same web app reads the CMI / Wei-He3 level spreadsheet. Opening the web app
+URL in a browser shows a live **Graphic View** page (`apps_script/GraphicView.html`:
+dewars, pressure gauges, cryostat levels, 24 h pressure trends, alert colours,
+refreshed every minute) that can be embedded in Notion (`/embed` + the URL). An
+optional script property `VIEW_KEY` makes the page need `?key=<VIEW_KEY>`. Tab
+`_System` in the status spreadsheet carries the mode and alerts for it and is not logged.
 
 ## Maintenance
 

@@ -14,6 +14,11 @@
  * The lab PC POSTs the upload format as query parameters:
  *   Instr0, pName0, pValue0, unit0, Instr1, ... (+ token) -> update status_now tabs
  *   action=log (+ token)                                   -> append one Log row (every 3 min)
+ * Tab "_System" (operation mode, switched-off instruments, alerts) comes with the status
+ * upload; tabs starting with "_" are not logged.
+ *
+ * GET on the web app URL shows the Graphic View page (GraphicView.html), e.g. embedded in
+ * Notion; ?format=json returns {ok, sheet} instead.
  *
  * Install once: paste this file (Extensions > Apps Script), add the script properties
  * below (Project Settings > Script properties), run `setup` (copy the logged token),
@@ -26,6 +31,7 @@
 //   ARCHIVE_NAME       archive file name before "_YYYYMM" (unset = HeliumRecoveryStatusLog)
 //   READ_SOURCES       comma-separated ids of other spreadsheets the lab PC may read
 //                      (this file is always readable, for CMI / Wei-He3 tabs kept here)
+//   VIEW_KEY           optional: the Graphic View page then needs ?key=<VIEW_KEY>
 const PROPS = PropertiesService.getScriptProperties();
 const LOG_SHEET_ID = PROPS.getProperty('LOG_SHEET_ID') || '';
 const ARCHIVE_FOLDER_ID = PROPS.getProperty('ARCHIVE_FOLDER_ID') || '';
@@ -98,9 +104,23 @@ function doPost(e) {
   }
 }
 
-function doGet() {
-  return json_({ok: true, sheet: SpreadsheetApp.getActive().getName()});
+function doGet(e) {
+  const p = (e && e.parameter) || {};
+  if (p.format === 'json') return json_({ok: true, sheet: SpreadsheetApp.getActive().getName()});
+  const key = PROPS.getProperty('VIEW_KEY');
+  if (key && p.key !== key) return HtmlService.createHtmlOutput('<p style="font-family:sans-serif">Not authorised.</p>');
+  const page = HtmlService.createTemplateFromFile('GraphicView');
+  page.viewKey = p.key || '';
+  return page.evaluate()
+    .setTitle('Helium Recovery · Graphic View')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL); // embeddable (Notion)
 }
+
+// Tabs the PC writes. The CMI / Wei Cryostat tabs belong to their own systems: when they are
+// kept in this file (no READ_SOURCES), the PC's copy of them is not written back, so a newer
+// reading is never overwritten by an older one.
+const OWN_TABS = ['Janis', 'ATL1', 'ATL2', 'ATL3', 'MPHUB', '_System'];
 
 /** Upload format -> one tab per instrument, header row + value row. */
 function writeStatus_(p) {
@@ -113,6 +133,7 @@ function writeStatus_(p) {
   const ss = SpreadsheetApp.getActive();
   let n = 0;
   Object.keys(byTab).forEach(tab => {
+    if (!READ_SOURCES.length && OWN_TABS.indexOf(tab) < 0 && !/^ZZTEST/.test(tab)) return;
     const sh = ss.getSheetByName(tab) || ss.insertSheet(tab);
     const width = Math.max(sh.getLastColumn(), 1);
     const header = sh.getRange(1, 1, 1, width).getValues()[0].filter(String);
@@ -137,7 +158,7 @@ function appendLog_() {
   const ss = SpreadsheetApp.getActive();
   const values = {};
   ss.getSheets().forEach(sh => {
-    if (sh.getLastRow() < 2) return;
+    if (sh.getLastRow() < 2 || sh.getName().charAt(0) === '_') return;
     const [header, row] = sh.getRange(1, 1, 2, sh.getLastColumn()).getValues();
     header.forEach((h, i) => { if (h) values[sh.getName() + '_' + h] = row[i]; });
   });
@@ -385,4 +406,52 @@ function logBook_() {
 
 function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+// --- Graphic View page (GraphicView.html) ----------------------------------------------------
+const TREND_HOURS = 24;
+const TREND_COLS = {inlet: 'MPHUB_Inlet Pressure (bar)', setpoint: 'MPHUB_Inlet Pressure Setpoint (mbar)',
+  tank: 'MPHUB_Tank Pressure (bar)'};
+
+/**
+ * Data for the Graphic View page (called from the page with google.script.run):
+ * every status_now tab as {header: value} (times as ms since 1970), and the last
+ * TREND_HOURS of inlet / setpoint / tank pressure from the Log (bar).
+ */
+function graphicView(key) {
+  const want = PROPS.getProperty('VIEW_KEY');
+  if (want && key !== want) throw new Error('Not authorised');
+  const plain = v => (v instanceof Date ? v.getTime() : v);
+  const tabs = {};
+  SpreadsheetApp.getActive().getSheets().forEach(sh => {
+    if (sh.getLastRow() < 2 || !sh.getLastColumn()) return;
+    const [header, row] = sh.getRange(1, 1, 2, sh.getLastColumn()).getValues();
+    const o = tabs[sh.getName()] = {};
+    header.forEach((h, i) => { if (h) o[h] = plain(row[i]); });
+  });
+  return {now: new Date().getTime(), tabs: tabs, trend: trend_()};
+}
+
+function trend_() {
+  const out = {t: [], inlet: [], setpoint: [], tank: []};
+  const log = logBook_().getSheetByName(LOG_TAB);
+  if (!log || log.getLastRow() < 2) return out;
+  const header = log.getRange(1, 1, 1, log.getLastColumn()).getValues()[0];
+  const n = Math.min(log.getLastRow() - 1, Math.ceil(TREND_HOURS * 60 / 3) + 20);
+  const first = log.getLastRow() - n + 1;
+  const col = name => {
+    const c = header.indexOf(name);
+    return c < 0 ? Array(n).fill('') : log.getRange(first, c + 1, n, 1).getValues().map(r => r[0]);
+  };
+  const t = col('Log Time'), inlet = col(TREND_COLS.inlet), sp = col(TREND_COLS.setpoint), tank = col(TREND_COLS.tank);
+  const since = new Date().getTime() - TREND_HOURS * 3600e3;
+  const num = v => (typeof v === 'number' && isFinite(v) ? v : null);
+  t.forEach((v, i) => {
+    if (!(v instanceof Date) || v.getTime() < since) return;
+    out.t.push(v.getTime());
+    out.inlet.push(num(inlet[i]));
+    out.setpoint.push(num(sp[i]) === null ? null : sp[i] / 1000);
+    out.tank.push(num(tank[i]));
+  });
+  return out;
 }

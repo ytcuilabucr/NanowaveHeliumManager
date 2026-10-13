@@ -137,3 +137,48 @@ async def test_publisher_reports_script_errors() -> None:
         assert not await pub.push_status()
     assert errors.get(ErrorKind.HTTP_POST).count == 2
     assert "Anyone" in errors.get(ErrorKind.HTTP_POST).message
+
+
+def test_system_rows_carry_mode_inactive_and_alerts() -> None:
+    import json
+    from types import SimpleNamespace
+
+    from heliumrecovery.core.modes import ModeController, OperationMode
+    from heliumrecovery.services.sheets_status import system_rows
+
+    modes = ModeController(None, inactive=("wei", "atl2"))
+    modes.set(OperationMode.TRANSFER)
+    rule = lambda key, sev: SimpleNamespace(key=key, device="pump", severity=sev, title=key.title())  # noqa: E731
+    alerts = SimpleNamespace(
+        active=lambda: [(rule("outlet_low", "warning"), SimpleNamespace(detail="2.25 bar"))],
+        pending=lambda: [(rule("pump_offline", "critical"), SimpleNamespace(detail="")),
+                         (rule("ignored", "info"), SimpleNamespace(detail=""))],
+    )
+    rows = {r.name: r for r in system_rows(modes, alerts)}
+    assert {r.instr for r in rows.values()} == {"_System"}
+    assert rows["Mode"].value == "transfer"
+    assert rows["Inactive"].value == "atl2,wei"
+    assert json.loads(rows["Alerts"].value) == {"alerts": [
+        ["warning", "outlet_low", "pump", "Outlet_Low", "2.25 bar", True],
+        ["critical", "pump_offline", "pump", "Pump_Offline", "", False]]}
+    assert re.fullmatch(r"\d{4}/\d\d/\d\d \d\d:\d\d:\d\d", rows["Last Update Time"].value)
+
+
+async def test_publisher_sends_extra_rows_and_survives_their_failure() -> None:
+    from heliumrecovery.services.sheets import Row
+
+    seen: list[httpx.QueryParams] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.params)
+        return httpx.Response(200, json={"ok": True})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        pub = StatusPublisher("https://script.invalid/exec", "tok", engine_with_everything(), ErrorHandler(), client=http)
+        pub.extra_rows = lambda: [Row("_System", "Mode", "", "observer")]
+        assert await pub.push_status()
+        pub.extra_rows = lambda: 1 / 0
+        assert await pub.push_status()
+    instrs = [[q[k] for k in q if k.startswith("Instr")] for q in seen]
+    assert instrs[0][-1] == "_System"
+    assert "_System" not in instrs[1]  # status still sent without the extras

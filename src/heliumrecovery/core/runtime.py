@@ -17,7 +17,7 @@ from ..drivers.base import DriverError
 from ..drivers.sheet_cryostat import SheetTabClient
 from ..drivers.tuya_valve import TuyaValve
 from ..services.sheets import SheetsUploader
-from ..services.sheets_status import StatusPublisher
+from ..services.sheets_status import StatusPublisher, system_rows
 from ..services.alerts import INFO, AlertConfig, AlertManager
 from ..services.operation_log import OperationLog
 from ..services.slack import SlackNotifier
@@ -125,6 +125,8 @@ class Core:
         for worker in (self.pump, self.atl, self.valve):
             if worker is not None:
                 worker.on_write_failed = self.alerts.write_failed
+        if self.status_sheet is not None:  # mode / alerts for the web Graphic View
+            self.status_sheet.extra_rows = lambda: system_rows(self.modes, self.alerts)
 
     def features(self) -> dict[str, bool]:
         return {
