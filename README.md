@@ -153,12 +153,15 @@ Other ways to run (only when the service is **not** running):
 The Apps Script in `apps_script/HeliumStatus.gs` is bound to the **status**
 spreadsheet and deployed as a web app. Its per-site settings are script
 properties (Project Settings → Script properties): `LOG_SHEET_ID` (the log
-spreadsheet) and `READ_SOURCES` (the CMI / Wei-He3 level spreadsheet id). The service posts to it:
+spreadsheet), and optionally `ARCHIVE_FOLDER_ID` / `ARCHIVE_NAME` (monthly archive
+folder and file name, default `LogArchives/HeliumRecoveryStatusLog_YYYYMM` next to the
+log) and `READ_SOURCES` (other spreadsheets to read CMI / Wei-He3 levels from, when
+they are not tabs of the status spreadsheet itself). The service posts to it:
 
 | File | Content |
 |---|---|
 | status spreadsheet | One tab per instrument, latest values (every 30 s) |
-| log spreadsheet, tab `Log` (+ `Charts`) | One row every 3 min; archived monthly to `LogArchives/` |
+| log spreadsheet, tab `Log` (+ `Charts`) | One row every 3 min; archived monthly to `LogArchives/HeliumRecoveryStatusLog_YYYYMM` |
 | Helium Recovery System Operation, tab `Helium Transfer` | Transfer log (created next to the log spreadsheet) |
 
 The same web app reads the CMI / Wei-He3 level spreadsheet. Charts and tabs can

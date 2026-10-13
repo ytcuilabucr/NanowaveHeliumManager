@@ -4,9 +4,12 @@
  * Same layout as the production sheets in Shared drives/Helium Recovery/Data_logs:
  *   status_now  (like CurrentData): one tab per instrument (Janis, ATL1-3, MPHUB, ...),
  *               row 1 = "Name (unit)" headers, row 2 = latest values.
+ *               The CMI / Wei Cryostat tabs are written here by their own systems and are
+ *               only read by this script.
  *   status_log  (like HeliumRecoveryStatusLog): tab "Log", one row per snapshot:
  *               Log Time | Total Volume (L) | <Tab>_<Header> ... (incl. MPHUB_Equiv. Vol (L)),
- *               archived to "<status_log name>_YYYYMM" in a LogArchives folder each month.
+ *               archived each month to "<ARCHIVE_NAME>_YYYYMM" (e.g. HeliumRecoveryStatusLog_202011)
+ *               in the LogArchives folder.
  *
  * The lab PC POSTs the upload format as query parameters:
  *   Instr0, pName0, pValue0, unit0, Instr1, ... (+ token) -> update status_now tabs
@@ -18,9 +21,16 @@
  */
 
 // Per-site settings, kept in the script properties (not in this file):
-//   LOG_SHEET_ID  id of the log spreadsheet (unset = log into this file)
-//   READ_SOURCES  comma-separated ids of spreadsheets the lab PC may read (CMI / Wei-He3 levels)
-const LOG_SHEET_ID = PropertiesService.getScriptProperties().getProperty('LOG_SHEET_ID') || '';
+//   LOG_SHEET_ID       id of the log spreadsheet (unset = log into this file)
+//   ARCHIVE_FOLDER_ID  id of the monthly archive folder (unset = "LogArchives" next to the log file)
+//   ARCHIVE_NAME       archive file name before "_YYYYMM" (unset = HeliumRecoveryStatusLog)
+//   READ_SOURCES       comma-separated ids of other spreadsheets the lab PC may read
+//                      (this file is always readable, for CMI / Wei-He3 tabs kept here)
+const PROPS = PropertiesService.getScriptProperties();
+const LOG_SHEET_ID = PROPS.getProperty('LOG_SHEET_ID') || '';
+const ARCHIVE_FOLDER_ID = PROPS.getProperty('ARCHIVE_FOLDER_ID') || '';
+const ARCHIVE_NAME = PROPS.getProperty('ARCHIVE_NAME') || 'HeliumRecoveryStatusLog';
+const ARCHIVE_FOLDER = 'LogArchives';
 const LOG_TAB = 'Log';
 const CHART_TAB = 'Charts';
 const TAB_ORDER = ['Janis', 'CMI', 'Wei Cryostat', 'ATL1', 'ATL2', 'ATL3', 'MPHUB'];
@@ -45,6 +55,10 @@ const VOLUME_COLS = ['Janis_LHe Volume (L)', 'CMI_Volume (L)', 'Wei Cryostat_He 
   'ATL2_Liquid Vol (L)', 'ATL3_Liquid Vol (L)', 'MPHUB_Equiv. Vol (L)'];
 
 function setup() {
+  if (!SpreadsheetApp.getActive()) {
+    throw new Error('This script is not attached to a spreadsheet. Open status_now > Extensions > Apps Script ' +
+      'and put the code there.');
+  }
   const log = logBook_();
   const sh = log.getSheetByName(LOG_TAB) || log.insertSheet(LOG_TAB);
   if (sh.getLastColumn() === 0) sh.getRange(1, 1, 1, LOG_HEADER.length).setValues([LOG_HEADER]).setFontWeight('bold');
@@ -57,6 +71,10 @@ function setup() {
   });
   const props = PropertiesService.getScriptProperties();
   if (!props.getProperty('TOKEN')) props.setProperty('TOKEN', Utilities.getUuid());
+  Logger.log('status sheet: ' + SpreadsheetApp.getActive().getName());
+  Logger.log('log sheet:    ' + log.getName() + (LOG_SHEET_ID ? '' : '  (LOG_SHEET_ID not set: logging into this file)'));
+  Logger.log('archives:     ' + archiveFolder_(log).getName() + '/' + ARCHIVE_NAME + '_YYYYMM');
+  Logger.log('HR_CRYO_SHEET_ID=' + SpreadsheetApp.getActive().getId());
   Logger.log('HR_STATUS_SHEET_TOKEN=' + props.getProperty('TOKEN'));
 }
 
@@ -146,30 +164,46 @@ function appendLog_() {
   return {ok: true, row: r, newColumns: extra.length};
 }
 
-/** On the first log of a new month, copy the Log tab to <name>_YYYYMM and start fresh. */
+/**
+ * On the first log of a new month, move the Log rows to <ARCHIVE_NAME>_YYYYMM in the archive
+ * folder and start fresh. If that file already exists (an earlier attempt), the rows are added to it.
+ */
 function archiveIfNewMonth_(book, log) {
   if (log.getLastRow() < 2) return;
   const last = log.getRange(log.getLastRow(), 1).getValue();
   const now = new Date();
   if (!(last instanceof Date) || (last.getMonth() === now.getMonth() && last.getFullYear() === now.getFullYear())) return;
-  const tz = Session.getScriptTimeZone();
-  const archive = SpreadsheetApp.create(book.getName() + '_' + Utilities.formatDate(last, tz, 'yyyyMM'));
-  log.copyTo(archive).setName(LOG_TAB);
-  archive.deleteSheet(archive.getSheets()[0]);
-  const file = DriveApp.getFileById(archive.getId());
-  const parent = DriveApp.getFileById(book.getId()).getParents().next();
-  const folders = parent.getFoldersByName('LogArchives');
-  file.moveTo(folders.hasNext() ? folders.next() : parent.createFolder('LogArchives'));
+  const name = ARCHIVE_NAME + '_' + Utilities.formatDate(last, Session.getScriptTimeZone(), 'yyyyMM');
+  const folder = archiveFolder_(book);
+  const found = folder.getFilesByName(name);
+  if (found.hasNext()) {
+    const target = SpreadsheetApp.openById(found.next().getId()).getSheetByName(LOG_TAB);
+    const rows = log.getRange(2, 1, log.getLastRow() - 1, log.getLastColumn()).getValues();
+    target.getRange(target.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
+  } else {
+    const archive = SpreadsheetApp.create(name);
+    log.copyTo(archive).setName(LOG_TAB);
+    archive.deleteSheet(archive.getSheets()[0]);
+    DriveApp.getFileById(archive.getId()).moveTo(folder);
+  }
   log.deleteRows(2, log.getLastRow() - 1);
 }
 
-// Spreadsheets the lab PC may read (header row + value row of one tab), never write.
-const READ_SOURCES = (PropertiesService.getScriptProperties().getProperty('READ_SOURCES') || '')
+/** ARCHIVE_FOLDER_ID, else a "LogArchives" folder next to the log file (created if missing). */
+function archiveFolder_(book) {
+  if (ARCHIVE_FOLDER_ID) return DriveApp.getFolderById(ARCHIVE_FOLDER_ID);
+  const parent = DriveApp.getFileById(book.getId()).getParents().next();
+  const folders = parent.getFoldersByName(ARCHIVE_FOLDER);
+  return folders.hasNext() ? folders.next() : parent.createFolder(ARCHIVE_FOLDER);
+}
+
+// Other spreadsheets the lab PC may read (header row + value row of one tab), never write.
+const READ_SOURCES = (PROPS.getProperty('READ_SOURCES') || '')
   .split(',').map(s => s.trim()).filter(String);
 
-/** Read row 1 (headers) and row 2 (values) of tab `gid` in an allow-listed spreadsheet. */
+/** Read row 1 (headers) and row 2 (values) of tab `gid` in this file or an allow-listed spreadsheet. */
 function readSheet_(id, gid) {
-  if (READ_SOURCES.indexOf(id) < 0) return {ok: false, error: 'sheet not allowed'};
+  if (id !== SpreadsheetApp.getActive().getId() && READ_SOURCES.indexOf(id) < 0) return {ok: false, error: 'sheet not allowed'};
   const sh = SpreadsheetApp.openById(id).getSheets().find(s => String(s.getSheetId()) === String(gid));
   if (!sh) return {ok: false, error: 'no tab with gid ' + gid};
   const width = sh.getLastColumn();

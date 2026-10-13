@@ -85,6 +85,16 @@ function loadScript({now = new Date('2026-10-09T10:00:00'), properties = {}} = {
   const books = {'status-id': status};
   const props = {LOG_SHEET_ID: 'test-log-sheet', READ_SOURCES: 'test-cryo-sheet', ...properties};
   const moved = [];
+  const folders = {};
+  const iter = list => { let i = 0; return {hasNext: () => i < list.length, next: () => list[i++]}; };
+  // Drive folders by name; a folder lists the books moved into it.
+  const folder = name => folders[name] || (folders[name] = {
+    name,
+    getName: () => name,
+    getFoldersByName: n => iter(folders[n] ? [folders[n]] : []),
+    getFilesByName: n => iter(Object.values(books).filter(b => b.folder === name && b.name === n)),
+    createFolder: n => folder(n),
+  });
   let clock = now;
   const FakeDate = class extends Date {
     constructor(...a) { super(...(a.length ? a : [clock.getTime()])); }
@@ -121,21 +131,17 @@ function loadScript({now = new Date('2026-10-09T10:00:00'), properties = {}} = {
     Logger: {log() {}},
     DriveApp: {
       getFileById: id => ({
-        getParents: () => ({next: () => ({
-          getFoldersByName: () => ({hasNext: () => false}),
-          getFilesByName: () => ({hasNext: () => false}),
-          name: 'status_log folder',
-          createFolder: name => ({name}),
-        })}),
-        moveTo: folder => moved.push({id, folder: folder.name}),
+        getParents: () => ({next: () => folder('status_log folder')}),
+        moveTo: f => { moved.push({id, folder: f.name}); if (books[id]) books[id].folder = f.name; },
       }),
+      getFolderById: id => folder('folder ' + id),
     },
   };
   vm.createContext(ctx);
   const code = fs.readFileSync(path.join(__dirname, '..', '..', 'apps_script', 'HeliumStatus.gs'), 'utf8');
   vm.runInContext(code, ctx);
   return {
-    ctx, status, books, props, moved,
+    ctx, status, books, props, moved, folder,
     setNow: d => { clock = d; },
     logBook: () => ctx.SpreadsheetApp.openById(vm.runInContext('LOG_SHEET_ID', ctx) || 'status-id'),
     post: params => ctx.doPost({parameter: params}).json,

@@ -87,8 +87,10 @@ Decide the folder, e.g. `Shared drives/Helium Recovery/Data_logs/`.
    (Without clasp: paste `HeliumStatus.gs` and `appsscript.json` into the editor
    by hand; show `appsscript.json` via Project Settings → "Show manifest file".)
 5. In the Apps Script editor, Project Settings → **Script properties**, add
-   `LOG_SHEET_ID` = the id of `HeliumRecovery Log` and `READ_SOURCES` = the
-   CMI / Wei-He3 level spreadsheet id. Then run **`setup`** once, accept the permissions, and
+   `LOG_SHEET_ID` = the id of `HeliumRecovery Log`. Only if the CMI / Wei-He3
+   levels are in another spreadsheet: `READ_SOURCES` = its id. Optional:
+   `ARCHIVE_FOLDER_ID` / `ARCHIVE_NAME` (default: `LogArchives` next to the log,
+   files `HeliumRecoveryStatusLog_YYYYMM`). Then run **`setup`** once, accept the permissions, and
    copy the token from the execution log (`HR_STATUS_SHEET_TOKEN=...`).
 6. **Deploy** → New deployment → Web app, *Execute as: Me*, *Who has access:
    Anyone*. Copy the **web app URL** (`.../exec`) and the **deployment id**.

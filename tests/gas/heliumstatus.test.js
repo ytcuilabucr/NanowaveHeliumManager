@@ -125,12 +125,44 @@ test('first log of a new month archives the old month and starts fresh', () => {
   g.post({token: g.token, action: 'log'});
   g.setNow(new Date('2026-11-01T00:01:00'));
   g.post({token: g.token, action: 'log'});
-  const archive = g.books['archive-status_log_202610'];
+  const archive = g.books['archive-HeliumRecoveryStatusLog_202610'];
   assert.ok(archive, Object.keys(g.books).join(','));
   assert.equal(archive.getSheetByName('Log').getLastRow(), 2);
-  assert.deepEqual(g.moved, [{id: 'archive-status_log_202610', folder: 'LogArchives'}]);
+  assert.deepEqual(g.moved, [{id: 'archive-HeliumRecoveryStatusLog_202610', folder: 'LogArchives'}]);
   const log = g.logBook().getSheetByName('Log');
   assert.equal(log.getLastRow(), 2); // header + the November row
+});
+
+test('archive name and folder come from the script properties', () => {
+  const g = setUp({now: new Date('2026-10-31T23:58:00'), properties: {ARCHIVE_FOLDER_ID: 'arch', ARCHIVE_NAME: 'Lab'}});
+  upload(g, SAMPLE);
+  g.post({token: g.token, action: 'log'});
+  g.setNow(new Date('2026-11-01T00:01:00'));
+  g.post({token: g.token, action: 'log'});
+  assert.deepEqual(g.moved, [{id: 'archive-Lab_202610', folder: 'folder arch'}]);
+});
+
+test('an archive that already exists gets the rows added, not a second file', () => {
+  const g = setUp({now: new Date('2026-10-31T23:50:00')});
+  upload(g, SAMPLE);
+  g.post({token: g.token, action: 'log'});
+  const existing = g.ctx.SpreadsheetApp.create('HeliumRecoveryStatusLog_202610');
+  existing.folder = 'LogArchives';
+  const prev = existing.insertSheet('Log');
+  prev.getRange(1, 1, 2, 2).setValues([['Log Time', 'Total Volume (L)'], [new g.ctx.Date('2026-10-31T23:47:00'), 1]]);
+  g.setNow(new Date('2026-10-31T23:58:00'));
+  g.post({token: g.token, action: 'log'});
+  g.setNow(new Date('2026-11-01T00:01:00'));
+  g.post({token: g.token, action: 'log'});
+  assert.equal(prev.getLastRow(), 4); // header + earlier row + the two October rows
+  assert.deepEqual(g.moved, []);
+  assert.equal(g.logBook().getSheetByName('Log').getLastRow(), 2);
+});
+
+test('setup refuses a script that is not attached to a spreadsheet', () => {
+  const g = loadScript();
+  g.ctx.SpreadsheetApp.getActive = () => null;
+  assert.throws(() => g.ctx.setup(), /not attached to a spreadsheet/);
 });
 
 test('buildCharts makes one chart per spec with existing columns', () => {
@@ -164,6 +196,11 @@ test('readsheet returns header/value row of an allow-listed tab only', () => {
   assert.deepEqual(res, {ok: true, name: 'CMI',
     values: {'Last Update Time': '2026/10/09 09:17:40', 'Level (inch)': 8.3, 'Volume (L)': 4.94608}});
   assert.equal(g.post({token: g.token, action: 'readsheet', id: 'other', gid: '0'}).error, 'sheet not allowed');
+  // CMI / Wei tabs kept in status_now itself are readable without READ_SOURCES
+  const own = g.status.insertSheet('Wei Cryostat');
+  own.getRange(1, 1, 2, 1).setValues([['He Level (L)'], [12.5]]);
+  assert.deepEqual(g.post({token: g.token, action: 'readsheet', id: 'status-id', gid: String(own.getSheetId())}),
+    {ok: true, name: 'Wei Cryostat', values: {'He Level (L)': 12.5}});
   assert.match(g.post({token: g.token, action: 'readsheet', id: src.getId(), gid: '1'}).error, /no tab/);
   assert.equal(g.post({token: 'bad', action: 'readsheet', id: src.getId(), gid: '0'}).ok, false);
 });
