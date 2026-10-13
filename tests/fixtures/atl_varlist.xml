@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SYNTHETIC fixture: structure inferred from the documented variables, not captured from a real ATL. -->
+<varlist>
+  <statusvar>4.62</statusvar>
+  <statusvar>1.25</statusvar>
+  <statusvar>12.4</statusvar>
+  <statusvar>87.3</statusvar>
+  <statusvar>21.6</statusvar>
+  <statusmachine>3</statusmachine>
+  <liquidmode>1</liquidmode>
+  <transfermode>0</transfermode>
+  <statusleds>5</statusleds>
+  <dewarcapacity>160</dewarcapacity>
+  <liquidvolume>87.3</liquidvolume>
+  <heaterpower>12.5</heaterpower>
+</varlist>

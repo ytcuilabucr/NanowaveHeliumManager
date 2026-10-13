@@ -1,0 +1,30 @@
+# secrets and machine-specific files (copied by hand, see docs/moving_to_new_pc.md)
+.env
+devices.json
+.clasp.json
+.clasp.stray.json
+tinytuya.json
+tuya-raw.json
+snapshot.json
+
+# runtime data
+state/
+logs/
+tools/
+
+# Python / tooling
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# editor / assistant settings
+.idea/
+.claude/
+.mcp.json
+
+# old project files and notes (kept on the lab PC only)
+HeliumRecovery LV2020_Dev/
+PythonInstrument.md
+guistructure.md

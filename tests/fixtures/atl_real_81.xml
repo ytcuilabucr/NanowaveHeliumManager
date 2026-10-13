@@ -1,0 +1,22 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<varlist>
+  <!--**********************************************************************************************-->
+  <!--********************************Up Frame / Table Variables***************************************-->
+  <!--**********************************************************************************************-->
+  <statusvar id="Diode Temperature" text="K" fixed="2">9.315581322</statusvar>
+  <statusvar id="Dewar Pressure" text="psi" fixed="2">1.894176483</statusvar>
+  <statusvar id="Input Gas Flow" text="L/mn" fixed="1">4.475531578</statusvar>
+  <statusvar id="Liquid Volume" text="L" fixed="1">64.83377838</statusvar>
+  <statusvar id="Liquifaction Rate" text="L/Day" fixed="1">0</statusvar>
+
+  <!--**********************************************************************************************-->
+  <!--************Up Frame / Status machine, liquefaction and transfer mode, leds and buttons*****************-->
+  <!--**********************************************************************************************-->
+  <statusmachine>2</statusmachine>
+  <liquidmode>2</liquidmode>
+  <transfermode>2</transfermode>
+  <statusleds>1</statusleds>
+  <dewarcapacity>160</dewarcapacity>
+  <liquidvolume>64.83377838</liquidvolume>
+  <heaterpower>0</heaterpower>
+</varlist>

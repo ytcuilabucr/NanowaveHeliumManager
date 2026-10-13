@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<varlist>
+  <statusvar>4.62</statusvar>
+  <statusvar>1.25</statusvar>
+  <statusvar>12.4</statusvar>
+  <statusmachine>3</statusmachine>
+  <liquidmode>1</liquidmode>
+  <transfermode>0</transfermode>
+  <statusleds>5</statusleds>
+  <dewarcapacity>160</dewarcapacity>
+  <liquidvolume>87.3</liquidvolume>
+</varlist>
